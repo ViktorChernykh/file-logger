@@ -28,6 +28,13 @@ public struct FileLogHandler: LogHandler {
 		let function: String
 		let line: UInt
 	}
+
+	/// Output format for emitted log lines.
+	public enum OutputFormat: Sendable {
+		case json   // NDJSON: one JSON object per line
+		case plain  // Human‑readable single‑line text
+	}
+
 	// MARK: - Stored properties
 
 	/// Cached formatter used to stamp each log line with an ISO‑8601 date/time
@@ -45,13 +52,15 @@ public struct FileLogHandler: LogHandler {
 		return e
 	}()
 
-
 	/// The label supplied by SwiftLog, typically identifying the `subsystem` or
 	/// component that emitted the message.
 	private let label: String
 
 	/// Actor responsible for batched, non‑blocking writes to the log file.
 	private let sink: FileSink = .shared
+
+	/// Selected output format.
+	private let format: OutputFormat
 
 	// MARK: - LogHandler conformance
 
@@ -83,10 +92,12 @@ public struct FileLogHandler: LogHandler {
 	///   - level: Initial minimum log level.
 	public init(
 		label: String,
-		level: Logger.Level
+		level: Logger.Level,
+		format: OutputFormat
 	) {
 		self.label = label
 		self.logLevel = level
+		self.format = format
 	}
 
 	// MARK: Factory
@@ -97,12 +108,14 @@ public struct FileLogHandler: LogHandler {
 	/// - Parameter level: Default log level threshold.
 	/// - Returns: A closure compatible with `LoggingSystem.bootstrap`.
 	public static func make(
-		level: Logger.Level
+		level: Logger.Level,
+		format: OutputFormat
 	) -> @Sendable (String) -> LogHandler {
 		return { label in
 			FileLogHandler(
 				label: label,
-				level: level
+				level: level,
+				format: format
 			)
 		}
 	}
@@ -142,23 +155,48 @@ public struct FileLogHandler: LogHandler {
 			? nil
 			: merged.mapValues { "\($0)" }
 
-		// Build structured payload expected by Loki NDJSON.
-		let entry: LogEntry = .init(
-			ts: formatter.string(from: Date()),
-			level: level.rawValue,
-			label: label,
-			message: message.description,
-			metadata: sanitizedMetadata,
-			source: source,
-			file: file,
-			function: function,
-			line: line
-		)
-		// Encode as single‑line JSON (NDJSON) and append newline.
-		guard var data: Data = try? encoder.encode(entry) else {
-			return
+		let timestamp: String = formatter.string(from: Date())
+
+		let data: Data
+		switch format {
+		case .json:
+			// Build structured payload expected by Loki NDJSON.
+			let entry: LogEntry = .init(
+				ts: timestamp,
+				level: level.rawValue,
+				label: label,
+				message: message.description,
+				metadata: sanitizedMetadata,
+				source: source,
+				file: file,
+				function: function,
+				line: line
+			)
+			// Encode as single‑line JSON (NDJSON) and append newline.
+			guard var encoded: Data = try? encoder.encode(entry) else {
+				return
+			}
+			encoded.append(0x0A) // '\n'
+			data = encoded
+		case .plain:
+			// Human‑readable single line. Metadata rendered as key=value pairs.
+			let levelText: String = level.rawValue.uppercased()
+			let metaText: String = {
+				guard let dict: [String: String] = sanitizedMetadata, !dict.isEmpty else {
+					return ""
+				}
+				let pairs: [String] = dict.sorted { $0.key < $1.key }.map { key, value in
+					"\(key)=\(value)"
+				}
+				return " " + pairs.joined(separator: " ")
+			}()
+			let contextText: String = " (\(source) \(file):\(function):\(line))"
+			let lineString: String = "[\(timestamp)] [\(levelText)] [\(label)] \(message.description)\(metaText)\(contextText)\n"
+			guard let encoded: Data = lineString.data(using: .utf8) else {
+				return
+			}
+			data = encoded
 		}
-		data.append(0x0A) // '\n'
 
 		// Fire‑and‑forget: the append runs on the actor's serial executor.
 		Task {

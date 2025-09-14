@@ -66,7 +66,7 @@ public actor FileSink {
 			guard let self else {
 				return
 			}
-			// Schedule periodic flush (every flushIntervalMs (50)).
+			// Schedule periodic flush (every flushIntervalMs).
 			try await self.scheduleFlush()
 		}
 	}
@@ -152,7 +152,7 @@ public actor FileSink {
 		bufferCount = 0
 	}
 
-	/// Periodic flush loop that wakes every 50 ms and writes buffered data to disk.
+	/// Periodic flush loop that wakes every `flushIntervalMs` milliseconds and writes buffered data to disk.
 	/// The loop exits automatically when the surrounding task is
 	/// cancelled (e.g., on application shutdown).
 	nonisolated
