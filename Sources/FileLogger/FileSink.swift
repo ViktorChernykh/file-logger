@@ -7,9 +7,8 @@
 
 import Foundation
 
-/// Single-writer actor that buffers log lines in memory and flushes them
-/// to disk in batches. A unique instance is created per log-file path so
-/// that at most **one** file descriptor is kept open per file.
+/// Single-writer actor that buffers log lines in memory and flushes them to disk in batches.
+/// A unique instance is created per log-file path so that at most **one** file descriptor is kept open per file.
 public actor FileSink {
 
 	// MARK: Static properties
@@ -17,8 +16,10 @@ public actor FileSink {
 	/// Global shared instance.
 	public static let shared: FileSink = .init()
 
+	// MARK: Stored - properties
+
 	/// A file name formatting tool.
-	let dateFormatter: DateFormatter = {
+	private let dateFormatter: DateFormatter = {
 		let formatter: DateFormatter = .init()
 		formatter.timeZone = .current
 		formatter.locale = .current
@@ -26,15 +27,13 @@ public actor FileSink {
 		return formatter
 	}()
 
-	// MARK: Stored - properties
-
-	/// Threshold in bytes at which the buffer is flushed immediately rather
-	/// than waiting for the periodic timer. Tune based on workload and I/O
-	/// characteristics (64 KiB by default).
+	/// Threshold in bytes at which the buffer is flushed immediately rather than waiting for the periodic timer.
+	/// Tune based on workload and I/O characteristics (64 KiB by default).
 	private let highWaterMark = 1 << 16		// 64 KiB
 
-	/// The time threshold for logging.
-	private let flushIntervalMs = 50
+	/// The time threshold for logging in `milliseconds`.
+	nonisolated
+	private let flushIntervalMs = 500
 
 	/// The general directory of logs.
 	private var directory: String = ""
@@ -42,8 +41,8 @@ public actor FileSink {
 	/// Current file name `yyyy-mm-dd`.
 	private var fileName: String
 
-	/// The `FileHandle` used for low‑level, append‑only writes. Opened with
-	/// `O_APPEND` to ensure each write is atomic on POSIX‑compliant file‑systems.
+	/// The `FileHandle` used for low‑level, append‑only writes. Opened with `O_APPEND`
+	/// to ensure each write is atomic on POSIX‑compliant file‑systems.
 	private var fileHandle: FileHandle?
 
 	/// In‑memory buffer that accumulates encoded log lines until the next flush.
@@ -55,9 +54,9 @@ public actor FileSink {
 
 	// MARK: - Init
 
-	/// Opens the file descriptor in append‑only mode and starts the periodic
-	/// flush loop. Fatal‑errors on I/O issues because logging should be
-	/// configured correctly during bootstrap; failing fast is preferable.
+	/// Opens the file descriptor in append‑only mode and starts the periodic flush loop.
+	/// Fatal‑errors on I/O issues because logging should be configured correctly during bootstrap;
+	/// failing fast is preferable.
 	private init() {
 		fileName = dateFormatter.string(from: Date()) + ".log"
 
@@ -76,8 +75,7 @@ public actor FileSink {
 
 	/// ((Re)opens the log file if `path` differs from the currently opened one.
 	/// Should be called **before** the first entry (for example, at the time of bootstrap).
-	/// Multiple concurrent calls are safe – the operation is performed only when
-	/// the path is changed.
+	/// Multiple concurrent calls are safe – the operation is performed only when the path is changed.
 	///
 	/// - Parameter dir: Absolute path to the log directory.
 	public func setupDirectory(_ dir: String) throws {
@@ -109,7 +107,8 @@ public actor FileSink {
 	}
 
 	// MARK: - Private methods
-
+	
+	/// Creates the current file name. If it is a new file, it will open it.
 	private func useFile() throws {
 		let fileName: String = dateFormatter.string(from: Date()) + ".log"
 		if self.fileName != fileName {
@@ -117,7 +116,8 @@ public actor FileSink {
 			try openFile()
 		}
 	}
-
+	
+	/// Opens the file descriptor.
 	private func openFile() throws {
 		let path: String = "\(directory)/\(fileName)"
 
@@ -138,11 +138,11 @@ public actor FileSink {
 	/// Flushes the current buffer to disk. Errors are swallowed because logging
 	/// failures should not crash the application; consider reporting via
 	/// metrics or stderr in production.
-	/// - Parameter isDeinit: true if the call is from deinit.
-	private func flush(isDeinit: Bool = false) async throws {
+	private func flush() async throws {
 		guard bufferCount > 0 else {
 			return
 		}
+		try useFile()
 		do {
 			try fileHandle?.write(contentsOf: buffer)
 		} catch {
@@ -150,14 +150,6 @@ public actor FileSink {
 		}
 		buffer.removeAll(keepingCapacity: true)
 		bufferCount = 0
-		guard !isDeinit else {
-			return
-		}
-		let newFileName: String = dateFormatter.string(from: Date()) + ".log"
-		if fileName != newFileName {
-			fileName = newFileName
-			try openFile()
-		}
 	}
 
 	/// Periodic flush loop that wakes every 50 ms and writes buffered data to disk.
@@ -182,7 +174,7 @@ public actor FileSink {
 	deinit {
 		// Ensure any remaining data is written out during shutdown.
 		Task { [weak self] in
-			try await self?.flush(isDeinit: true)
+			try await self?.flush()
 		}
 	}
 }

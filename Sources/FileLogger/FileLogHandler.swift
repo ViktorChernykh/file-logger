@@ -8,16 +8,27 @@
 import Foundation
 import Logging
 
-/// Marks `ISO8601DateFormatter` as `Sendable` because Foundation guarantees
-/// its thread‑safety. The annotation is `@unchecked` since the compiler cannot
-/// verify this property automatically.
+/// Marks `ISO8601DateFormatter` as `Sendable` because Foundation guarantees its thread‑safety.
+/// The annotation is `@unchecked` since the compiler cannot verify this property automatically.
 extension ISO8601DateFormatter: @unchecked @retroactive Sendable {}
 
 /// High-throughput `LogHandler` that writes plain text lines to disk
 /// asynchronously  via an underlying `FileSink` actor.
 public struct FileLogHandler: LogHandler {
 
-	// MARK: Static properties
+	/// Codable representation of one log record compatible with swift‑log‑loki.
+	private struct LogEntry: Codable {
+		let ts: String					// RFC‑3339 / ISO‑8601 timestamp
+		let level: String				// log level text (info, error, …)
+		let label: String				// subsystem/component label
+		let message: String				// user‑supplied message
+		let metadata: [String: String]?	// flattened metadata dictionary
+		let source: String
+		let file: String
+		let function: String
+		let line: UInt
+	}
+	// MARK: - Stored properties
 
 	/// Cached formatter used to stamp each log line with an ISO‑8601 date/time
 	/// string containing fractional‑second precision.
@@ -27,9 +38,15 @@ public struct FileLogHandler: LogHandler {
 		return f
 	}()
 
-	// MARK: - Stored properties
+	/// Shared JSONEncoder used to serialize each log line for Loki (NDJSON).
+	private let encoder: JSONEncoder = {
+		let e: JSONEncoder = .init()
+		e.outputFormatting = [.withoutEscapingSlashes]
+		return e
+	}()
 
-	/// The label supplied by SwiftLog, typically identifying the subsystem or
+
+	/// The label supplied by SwiftLog, typically identifying the `subsystem` or
 	/// component that emitted the message.
 	private let label: String
 
@@ -41,8 +58,8 @@ public struct FileLogHandler: LogHandler {
 	/// The minimum severity level that will be emitted by this handler.
 	public var logLevel: Logger.Level
 
-	/// Metadata that will be attached to every log message produced through
-	/// this handler, unless overridden at the call‑site.
+	/// Metadata that will be attached to every log message produced through this handler,
+	/// unless overridden at the call‑site.
 	public var metadata: Logger.Metadata = [:]
 
 	/// Dynamic subscript for reading and writing individual metadata keys.
@@ -120,18 +137,32 @@ public struct FileLogHandler: LogHandler {
 			new
 		}
 
-		// Prepend a space only when metadata is non‑empty for cleaner output.
-		let meta: String = merged.isEmpty ? "_" : " \(merged)"
-		// Compose the final string; keep allocations minimal.
-		let context: String = " [\(source):\(file):\(function):\(line)]"
-		let timestamp: String = formatter.string(from: Date())
-		let string: String = "[\(timestamp)] [\(level.rawValue.uppercased())] [\(label)] [\(message)] [\(meta)] [\(context)]\n"
+		// Flatten metadata so it is JSON‑encodable.
+		let sanitizedMetadata: [String: String]? = merged.isEmpty
+			? nil
+			: merged.mapValues { "\($0)" }
 
-		let line: Data = .init(string.utf8)
+		// Build structured payload expected by Loki NDJSON.
+		let entry: LogEntry = .init(
+			ts: formatter.string(from: Date()),
+			level: level.rawValue,
+			label: label,
+			message: message.description,
+			metadata: sanitizedMetadata,
+			source: source,
+			file: file,
+			function: function,
+			line: line
+		)
+		// Encode as single‑line JSON (NDJSON) and append newline.
+		guard var data: Data = try? encoder.encode(entry) else {
+			return
+		}
+		data.append(0x0A) // '\n'
 
 		// Fire‑and‑forget: the append runs on the actor's serial executor.
 		Task {
-			await sink.append(line)
+			await sink.append(data)
 		}
 	}
 }
