@@ -4,7 +4,8 @@ import PackageDescription
 let package = Package(
     name: "file-logger",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v15),
+		.iOS(.v18),
     ],
     products: [
         .library(name: "FileLogger", targets: ["FileLogger"]),
@@ -27,8 +28,6 @@ let package = Package(
 
 /// Swift compiler settings for Release configuration.
 var swiftSettings: [SwiftSetting] { [
-	// Enable maximum optimizations in release
-	.unsafeFlags(["-O"], .when(configuration: .release)),
 	// "ExistentialAny" is an option that makes the use of the `any` keyword for existential types `required`
 	.enableUpcomingFeature("ExistentialAny")
 ] }

@@ -129,13 +129,6 @@ public struct FileLogging: LogHandler {
 		// Merge static + call-site metadata.
 		let merged: [String: Logger.MetadataValue] = metadata.merging(extra ?? [:])
 
-		let metaText: [String: String] = {
-			guard !merged.isEmpty else {
-				return [:]
-			}
-			return merged.mapValues { "\($0)" }
-		}()
-
 		// Flatten metadata so it is JSON‑encodable.
 		let sanitizedMetadata: [String: String]? = merged.isEmpty
 			? nil
@@ -178,7 +171,14 @@ public struct FileLogging: LogHandler {
 			let timestamp: String = iso8601.string(from: Date())
 
 			// Human‑readable single line. Metadata rendered as key=value pairs.
-			let levelText: String = level.rawValue
+			let levelText: String = level.rawValue.uppercased()
+			let metaText: [String: String] = {
+				guard !merged.isEmpty else {
+					return [:]
+				}
+				return merged.mapValues { "\($0)" }
+			}()
+
 			let contextText: String = " (\(source) \(file):\(function):\(line))"
 			let lineString: String = "[\(timestamp)] [\(levelText)] [\(label)] \(message.description)\(metaText)\(contextText)\n"
 			guard let encoded: Data = lineString.data(using: .utf8) else {
