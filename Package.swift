@@ -4,7 +4,8 @@ import PackageDescription
 let package = Package(
     name: "file-logger",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v15),
+		.iOS(.v18),
     ],
     products: [
         .library(name: "FileLogger", targets: ["FileLogger"]),
