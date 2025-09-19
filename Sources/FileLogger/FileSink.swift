@@ -52,6 +52,9 @@ public actor FileSink {
 	/// performance so we avoid calling `buffer.count` repeatedly.
 	private var bufferCount: Int = 0
 
+	/// Prevent spawning multiple immediate flushes in a row.
+	private var immediateFlushScheduled: Bool = false
+
 	// MARK: - Init
 
 	/// Opens the file descriptor in append‑only mode and starts the periodic flush loop.
@@ -92,22 +95,46 @@ public actor FileSink {
 	// MARK: - Internal API
 
 	/// Appends an encoded log line to the in‑memory buffer. If the buffer size
-	/// crosses `highWaterMark`, it triggers an immediate flush in the background.
+	/// crosses `highWaterMark`, it triggers an immediate flush (debounced).
 	///
 	/// - Parameter data: UTF‑8 encoded bytes of a single log line.
-	func append(_ data: Data) {
+	func append(_ data: Data) throws {
 		buffer.append(data)
 		bufferCount += data.count
-		// If we crossed threshold — flush immediately.
-		if bufferCount >= highWaterMark {
-			Task {
-				try await flush()
-			}
+		// If we crossed threshold — schedule immediate flush only once.
+		if bufferCount >= highWaterMark, immediateFlushScheduled == false {
+			immediateFlushScheduled = true
+			try flush()
+			immediateFlushScheduled = false
 		}
 	}
 
 	// MARK: - Private methods
-	
+
+	func shutdown() throws {
+		guard bufferCount > 0 else {
+			return
+		}
+		try fileHandle?.write(contentsOf: buffer)
+		buffer.removeAll(keepingCapacity: true)
+		bufferCount = 0
+		try fileHandle?.close()
+	}
+
+	/// Flushes the current buffer to disk. Errors are swallowed because logging
+	/// failures should not crash the application; consider reporting via
+	/// metrics or stderr in production.
+	private func flush() throws {
+		guard bufferCount > 0 else {
+			return
+		}
+		try useFile()
+		let dataToWrite: Data = buffer
+		buffer.removeAll(keepingCapacity: true)
+		bufferCount = 0
+		try fileHandle?.write(contentsOf: dataToWrite)
+	}
+
 	/// Creates the current file name. If it is a new file, it will open it.
 	private func useFile() throws {
 		let fileName: String = dateFormatter.string(from: Date()) + ".log"
@@ -116,7 +143,7 @@ public actor FileSink {
 			try openFile()
 		}
 	}
-	
+
 	/// Opens the file descriptor.
 	private func openFile() throws {
 		let path: String = "\(directory)/\(fileName)"
@@ -135,46 +162,18 @@ public actor FileSink {
 		try fileHandle?.seekToEnd()
 	}
 
-	/// Flushes the current buffer to disk. Errors are swallowed because logging
-	/// failures should not crash the application; consider reporting via
-	/// metrics or stderr in production.
-	private func flush() async throws {
-		guard bufferCount > 0 else {
-			return
-		}
-		try useFile()
-		do {
-			try fileHandle?.write(contentsOf: buffer)
-		} catch {
-			// In production you may want to send this to stderr or metrics.
-		}
-		buffer.removeAll(keepingCapacity: true)
-		bufferCount = 0
-	}
-
 	/// Periodic flush loop that wakes every `flushIntervalMs` milliseconds and writes buffered data to disk.
 	/// The loop exits automatically when the surrounding task is
 	/// cancelled (e.g., on application shutdown).
 	nonisolated
 	private func scheduleFlush() async throws {
 		while true {
-			// We will terminate if the task is cancelled (for example, when the application terminates).
-			guard !Task.isCancelled else {
-				break
-			}
 			do {
 				try await Task.sleep(for: .milliseconds(flushIntervalMs))
 			} catch {
-				break // Sleep failed or task cancelled.
+				try await Task.sleep(for: .milliseconds(flushIntervalMs))
 			}
 			try await flush()
-		}
-	}
-
-	deinit {
-		// Ensure any remaining data is written out during shutdown.
-		Task { [weak self] in
-			try await self?.flush()
 		}
 	}
 }
