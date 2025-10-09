@@ -42,7 +42,7 @@ targets: [
 ## Requirements
 
 - Swift 6.0+
-- Linux or Apple platforms
+- Linux or MacOS platforms
 - swift-log (added automatically via SPM consumer)
 
 ## Bootstrap:
