@@ -115,7 +115,7 @@ public struct FileLogging: LogHandler {
 	///
 	/// - Parameter directory: Optional directory override for this setup call. If `nil`, uses the directory passed to the initializer.
 	/// - Throws: Any error encountered while creating the directory or opening the file.
-	func setup(directory: String? = nil) async throws {
+	public func setup(directory: String? = nil) async throws {
 		try await sink.setup(directory: directory)
 	}
 
