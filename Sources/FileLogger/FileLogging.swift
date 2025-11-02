@@ -38,7 +38,7 @@ public struct FileLogging: LogHandler {
 	private let label: String
 
 	/// Actor responsible for batched, non‑blocking writes to the log file.
-	private let sink: FileSink = .shared
+	private let sink: FileSink
 
 	/// Selected output format.
 	private let format: OutputFormat
@@ -69,9 +69,12 @@ public struct FileLogging: LogHandler {
 	/// that callers never block on disk operations.
 	///
 	/// - Parameters:
+	///   - directory: Directory where the log files will be stored. A `FileSink` will write into this directory.
 	///   - label: The subsystem/component label assigned by SwiftLog.
-	///   - level: Initial minimum log level.
+	///   - level: Initial minimum log level threshold for this handler.
+	///   - format: Output encoding for each log line (`.json` NDJSON or `.plain` human‑readable).
 	public init(
+		directory: String,
 		label: String,
 		level: Logger.Level,
 		format: OutputFormat
@@ -79,26 +82,41 @@ public struct FileLogging: LogHandler {
 		self.label = label
 		self.logLevel = level
 		self.format = format
+		self.sink = FileSink(directory)
 	}
 
 	// MARK: Factory
 
-	/// Convenience factory for `LoggingSystem.bootstrap`. Returns a closure
-	/// that constructs a new `FileLogging` for each distinct label.
+	/// Convenience factory intended for `LoggingSystem.bootstrap`.
+	/// Returns a closure that creates a new `FileLogging` per label.
 	///
-	/// - Parameter level: Default log level threshold.
-	/// - Returns: A closure compatible with `LoggingSystem.bootstrap`.
+	/// - Parameters:
+	///   - directory: Directory where the log files will be stored.
+	///   - level: Default minimum log level for handlers created by the closure.
+	///   - format: Output encoding for each log line produced by the handlers.
+	/// - Returns: A closure that accepts a `label` and returns a configured `FileLogging` for that label.
 	public static func make(
+		directory: String,
 		level: Logger.Level,
 		format: OutputFormat
 	) -> @Sendable (String) -> any LogHandler {
 		return { label in
 			FileLogging(
+				directory: directory,
 				label: label,
 				level: level,
 				format: format
 			)
 		}
+	}
+
+	/// Prepares the underlying `FileSink` and ensures the target directory exists.
+	/// Call this once during application bootstrap before emitting logs.
+	///
+	/// - Parameter directory: Optional directory override for this setup call. If `nil`, uses the directory passed to the initializer.
+	/// - Throws: Any error encountered while creating the directory or opening the file.
+	func setup(directory: String? = nil) async throws {
+		try await sink.setup(directory: directory)
 	}
 
 	/// Logs a single message. Execution never blocks because the encoded line

@@ -11,11 +11,6 @@ import Foundation
 /// A unique instance is created per log-file path so that at most **one** file descriptor is kept open per file.
 public actor FileSink {
 
-	// MARK: Static properties
-
-	/// Global shared instance.
-	public static let shared: FileSink = .init()
-
 	// MARK: Stored - properties
 
 	/// A file name formatting tool.
@@ -60,7 +55,8 @@ public actor FileSink {
 	/// Opens the file descriptor in append‑only mode and starts the periodic flush loop.
 	/// Fatal‑errors on I/O issues because logging should be configured correctly during bootstrap;
 	/// failing fast is preferable.
-	private init() {
+	init(_ directory: String) {
+		self.directory = "/" + directory.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 		fileName = dateFormatter.string(from: Date()) + ".log"
 
 		// Kick‑off the background flush loop. The detached task holds a weak
@@ -76,20 +72,17 @@ public actor FileSink {
 
 	// MARK: - Configuration
 
-	/// ((Re)opens the log file if `path` differs from the currently opened one.
-	/// Should be called **before** the first entry (for example, at the time of bootstrap).
-	/// Multiple concurrent calls are safe – the operation is performed only when the path is changed.
-	///
-	/// - Parameter dir: Absolute path to the log directory.
-	public func setupDirectory(_ dir: String) throws {
-		let directory = "/" + dir.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-		if self.directory != directory {
-			self.directory = directory
+	func setup(directory dir: String?) throws {
+		if let dir {
+			let directory = "/" + dir.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+			if self.directory != directory {
+				self.directory = directory
+			}
 		}
 		// Create log folder if it doesn't exist
 		try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
 
-		try openFile()
+		try reopenFile()
 	}
 
 	// MARK: - Internal API
@@ -140,12 +133,12 @@ public actor FileSink {
 		let fileName: String = dateFormatter.string(from: Date()) + ".log"
 		if self.fileName != fileName {
 			self.fileName = fileName
-			try openFile()
+			try reopenFile()
 		}
 	}
 
 	/// Opens the file descriptor.
-	private func openFile() throws {
+	private func reopenFile() throws {
 		let path: String = "\(directory)/\(fileName)"
 
 		// Close previous handle.
