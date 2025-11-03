@@ -55,25 +55,40 @@ enum Entrypoint {
     static func main() async throws {
         // You don't have to create a folder for the logs.
         // If it does not exist, it will be created automatically at: Resources/Logs.
-        // The logs will be written to a new file 'yyyy-mm-dd.log' every day.
-        let logDirectory: String = "path to your log directory"
-        try await FileSink.shared.setupDirectory(logDirectory)		// optional
+        // The logs will be written to a new file 'yyyy-mm-dd.log' every day in format .json or .plain.
+		let label: String = "your domain"
+		let logHandler: FileLogging = .init(
+			directory: "",
+			label: label,
+			level: .debug, 
+			format: .json
+		)
 
         LoggingSystem.bootstrap { label in
-			let label: String = "your domain"
 #if DEBUG
-			let logHandler: FileLogging = .init(label: label, level: .debug, format: .json)
             // In a debug environment, write both to a file and to the console.
             var console: StreamLogHandler = .standardOutput(label: label)
             console.logLevel = .debug
             return MultiplexLogHandler([logHandler, console])
 #else
             // In a production environment, writing is done only to a file.
-			let logHandler: FileLogHandler = .init(label: label, level: .info, format: .json)
             return MultiplexLogHandler([logHandler])
 #endif
 		}
         let env: Environment = try .detect()
+		let app: Application = try await .make(env)
+        
+		// You don't have to create a folder. If it doesn't exist, it will be created automatically.
+		let logDirectory: String
+#if os(macOS)
+		// Logs directory. Logs will be written to a new file 'yyyy-mm-dd.log' every day.
+		logDirectory = "path to log on macOS"
+#elseif os(linux)
+		logDirectory = "path to log on Linux"
+#else
+#error("Unsupported platform")
+#endif
+		try await logHandler.setup(directory: logDirectory)
     . . .
 }
 ```
